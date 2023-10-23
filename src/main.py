@@ -65,7 +65,13 @@ print(
 
 # Filter again, also by transaction approval, don't filter $50 transactions and distinct customers.
 is_approved = payments_df["Appr?"] == 1
+
+# WRONG WRONG WRONG
 amounts = payments_df[is_month & is_year & is_approved]["Amount"]
+
+# CORRECT
+amounts = payments_df[is_month & is_year & is_approved & is_amount]["Amount"]
+
 print(f"The total transacted amount is ${amounts.sum() :,.2f}.")
 
 # ### iv. Of the 10 issuing banks with the most deposit attempts between $150.00 and $999.99 in 2021, which had the highest approval rate for the attempts of that deposit amount?
@@ -119,7 +125,7 @@ payments_df_quarters.drop("Quarter", inplace=True, axis=1)
 
 # Encode categorical variables as ordinal by frequency, for feature interaction and later effect estimation.
 encoders_store = dict()
-for feature in ["Co Website", "Processing Co", "Issuing Bank", "Amount"]:
+for feature in ["Co Website", "Processing Co", "Issuing Bank"]:
     encoder = (
         payments_df_quarters.groupby(feature)[feature].count()
     ) / payments_df_quarters.shape[0]
@@ -144,7 +150,7 @@ f_test /= np.max(f_test)
 mi = mutual_info_regression(X, y)
 mi /= np.max(mi)
 
-plt.figure(figsize=(15, 5))
+plt.figure(figsize=(15, 20))
 for i, v in enumerate(X.columns):
     plt.subplot(3, 3, i + 1)
     plt.scatter(X[v], y, edgecolor="black", s=20)
@@ -170,8 +176,14 @@ print(lgm.score(X, y))
 coefficients = pd.Series({v: lgm.coef_[0][i] for i, v in enumerate(X.columns)})
 print(coefficients)
 
+# WRONG WRONG WRONG
+#
 # The coefficients suggest that as users perform transactions with the more popular banks, in Q3, the rate at which transactions are approved increases. Specifically, the very same transaction from the least frequent bank, executed by the most frequent bank in Q3, would see an increase in it's Odds of being approved of $e^{3.761}=43$. This same behavior in Q4 would represent an increase of $e^{3.761-1.59}=8.77$, much lower odds. What do we make of this? Customers changing banks had a much bigger effect on the rate at which transactions where apprroved in 2021Q3, than it did in 2020Q4. Changing from a less frequent bank to a more frequent bank DOES increase the odds of a transaction being approved, but in recent quarters more than previously.
 
+
+# CORRECT
+#
+# The coefficients suggest that as users perform transactions with the more popular banks, in Q3, the rate at which transactions are approved increases. Specifically, the very same transaction from the least frequent bank, executed by the most frequent bank in Q3, would see an increase in it's Odds of being approved of $e^{3.047}=21.052$. This same behavior in Q4 would represent an increase of $e^{3.047 + 1.076}=61.744$, much higher odds. What do we make of this? Customers changing banks had a much bigger effect on the rate at which transactions where approved in 2020Q4, than it did in 2021Q3. Changing from a less frequent bank to a more frequent bank DOES increase the odds of a transaction being approved, but in recent quarters less than previously.
 
 # ### viii. If you had more time, which other analyses would you like to perform on this dataset to identify additional causal factors to those identified in QUESTION 6.
 
