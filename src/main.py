@@ -3,9 +3,11 @@
 # This notebook is my take on the Trekops Data Analytics Challenge for the Data Analyst job application.
 
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.feature_selection import f_regression, mutual_info_regression
+from sklearn.linear_model import LogisticRegression
 
 # ## 1. Importing and Cleaning the Data
 
@@ -96,22 +98,85 @@ print(
 
 # ### v. Without performing any analysis, which two parameters would you suspect of causing the successive quarterly decrease in approval rate? Why?
 
-# I would expect the most influential factor would be the Deposit Amount. As the year goes on, people might have different spending habits and would most likely spend more later in the year and settle into a routine. Greater transaction amounts (both inside and outside the platform) are likely inversely correlated with approval, and so attempted transactions later in the year would be most likely to fail. Insufficient funds and accelerated spending would moslikely result in more rejected transactions.
+# I would expect the most influential factor would be the Deposit Amount. As the time goes on, people might have different spending habits and would most likely spend more later as they settle into a spending routine. Greater transaction amounts (both inside and outside of the platform) are likely inversely correlated with approval, and so attempted transactions later in time would be most likely to fail. Insufficient funds and accelerated spending would moslikely result in more rejected transactions.
 
-# I would also expect the Website to which customers submit their payment to be of great influence. As the year goes, users might migrate from one platform to another and as such would inevitably face some friction in performing their transactions. Not only would a bank likely flag these changes as fraud, the customers themselves might make mistakes in registering their information to a new website. Beyond that, a few platforms are likely to move the most volume by transaction amount and transaction count, and so these are likely to have a different approval rate with respect to other websites.
+# I would also expect the Website to which customers submit their payment to be of great influence. As the time goes on, users might migrate from one platform to another and as such would inevitably face some friction in performing their transactions. Not only would a bank likely flag these changes as fraud, the customers themselves might make mistakes in registering their information to a new website. Beyond that, a few platforms are likely to move the most volume by transaction amount and transaction count, and so these are likely to have a different approval rate with respect to other websites.
 
-# ### vi. Identify and describe two main causal factors of the decline in approval rates seen in Q3 2021 vs Q4 2020?
+# ### vi. Identify and describe two main causal factors of the decline in approval rates seen in Q3 2021 vs Q4 2021?
 
-# Without getting into predictive or inferential models, I identify the most influential factors according to different importance metrics.
+# Without getting into predictive or inferential models, I identify the most influential factors according to the mutual information metrix.
+# In order to quantify the effect to which each feature in the dataset influences the approval of a transaction, relative to the quarter it was performed in, I introduce a binary variable, indicative of the quarter, and calculate it's interaction (by product of the variables) with all other features. This analysis would allow us to identify the most significant interaction and, thus, the more influential feature between quarters.
 
-# Plot approval with respect to each other feature.
-sns.pairplot(payments_df)
-plt.show()
+# Filter create dummy quarter flag. Drop irrelevant features.
+payments_df_quarters = payments_df[
+    (payments_df["Attempt Timestamp"].dt.quarter.isin([3, 4]))
+].drop(["CustomerID", "Attempt Timestamp"], axis=1)
 
+payments_df_quarters["Q4"] = (payments_df_quarters["Quarter"].dt.quarter == 4).astype(
+    int
+)
+payments_df_quarters.drop("Quarter", inplace=True, axis=1)
+
+# Encode categorical variables as ordinal by frequency, for feature interaction and later effect estimation.
+encoders_store = dict()
+for feature in ["Co Website", "Processing Co", "Issuing Bank", "Amount"]:
+    encoder = (
+        payments_df_quarters.groupby(feature)[feature].count()
+    ) / payments_df_quarters.shape[0]
+
+    payments_df_quarters[feature] = payments_df_quarters[feature].apply(
+        lambda x: encoder[x]
+    )
+
+# Add feature interactions.
+for feature in ["Co Website", "Processing Co", "Issuing Bank", "Amount"]:
+    payments_df_quarters[f"Q4:{feature}"] = (
+        payments_df_quarters["Q4"] * payments_df_quarters[feature]
+    )
 
 # Mutual information:
+X = payments_df_quarters.drop("Appr?", axis=1)
+y = payments_df_quarters["Appr?"]
 
+f_test, _ = f_regression(X, y)
+f_test /= np.max(f_test)
+
+mi = mutual_info_regression(X, y)
+mi /= np.max(mi)
+
+plt.figure(figsize=(15, 5))
+for i, v in enumerate(X.columns):
+    plt.subplot(3, 3, i + 1)
+    plt.scatter(X[v], y, edgecolor="black", s=20)
+    plt.xlabel(v, fontsize=14)
+    if i == 0:
+        plt.ylabel("$y$", fontsize=14)
+    plt.title("F-test={:.2f}, MI={:.2f}".format(f_test[i], mi[i]), fontsize=16)
+plt.show()
+
+# Because the relation between the pedictive variables and the response variables is most likely not linear, we should trust the Mutual Information more than the F-statistic which assumes a linear relationship. The most influential feature is the Processing Company, most likely because of how unbalanced the data is. A more in-depth analysis would allow for data balancing techniques. However, we care not about the most influential feature in general to predict the approval of a transaction, but the most influential for the change in approval rate between quarters.
+
+# The most important interactions are the those with Processing Co and Issuing Bank, with Amount closely following behind. At this stage, we cannot yet tell the relation between Approval Rate and these interactions, only that these are greatly influential.
 
 # ### vii. Choose one of the main factors identified in QUESTION 6. How much of the approval rate decline seen in Q3 2021 vs Q4 2020 is explained by this factor?
 
+# To identify the relationship between a feature and its response variable, we must establish a statistical model. Let's start with a logistic regression of the Appr? variable as a function of all other features and the interactions with the Q4 flag. We allow for a regularization term as the variables are definitely mutualy correlated.
+
+lgm = LogisticRegression(random_state=0).fit(X, y)
+print(lgm.score(X, y))
+
+# Our naive first model is able to predict the approval of any transaction with close to 63% accuracy. I would like to further refine the model but will keep from doing so due to time constraints. Let's evaluate the coefficients and identify the effect of a relevant interaction on approval.
+
+coefficients = pd.Series({v: lgm.coef_[0][i] for i, v in enumerate(X.columns)})
+print(coefficients)
+
+# The coefficients suggest that as users perform transactions with the more popular banks, in Q3, the rate at which transactions are approved increases. Specifically, the very same transaction from the least frequent bank, executed by the most frequent bank in Q3, would see an increase in it's Odds of being approved of $e^{3.761}=43$. This same behavior in Q4 would represent an increase of $e^{3.761-1.59}=8.77$, much lower odds. What do we make of this? Customers changing banks had a much bigger effect on the rate at which transactions where apprroved in 2021Q3, than it did in 2020Q4. Changing from a less frequent bank to a more frequent bank DOES increase the odds of a transaction being approved, but in recent quarters more than previously.
+
+
 # ### viii. If you had more time, which other analyses would you like to perform on this dataset to identify additional causal factors to those identified in QUESTION 6.
+
+# Our analysis so far has concluded that users changing banks has the potential to severely influence the rate at which transactions are approved. What remains, is to evaluate to what extent people have been changing banks. If people have, and the composition of transactions became more homogeneous across banks, that would explain why transaction approvals have been on decline. On the other hand, if the composition of transactions has become less homogeneous, and people have been migrating toward the more common banks, we will have come across a contradiction in our results as the expected effect would be an increase in overall transaction rate as the Odds increase. As such, we would have to look at other factors and other interactions with which to explain the decline in approval rate. Also, the accuracy of the logistic regression model is good, but not excellent. I would very much like to explore some more refined models, or even just to tune the hyperparameters of the logistic regression.
+
+# More over, this analysis would be well accompanied by more in depth and attractive visualizations with which to explain trends and interactions between variables. Visualization is time consuming, but, if given the time, a Dashboard built on Dash or PowerBI could help communicate this information to an audience less familiar with statistics.
+
+# Uploading the data to a server (temptatively as a SQL database) to easily access remotely and keep up to date as a single source of truth would also be quite beneficial for the long term applicability of the study.
